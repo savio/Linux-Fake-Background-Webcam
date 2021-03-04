@@ -12,15 +12,13 @@ from typing import Any, Dict
 import aiohttp
 import cv2
 import numpy as np
-import pyfakewebcam
 import requests
 import requests_unixsocket
 import os
 import fnmatch
 import time
 import threading
-
-from akvcam import AkvCameraWriter
+import pyvirtualcam
 
 def findFile(pattern, path):
     for root, _, files in os.walk(path):
@@ -31,7 +29,8 @@ def findFile(pattern, path):
 
 class RealCam:
     def __init__(self, src, frame_width, frame_height, frame_rate):
-        self.cam = cv2.VideoCapture(src, cv2.CAP_V4L2)
+        self.cam = cv2.VideoCapture(src)
+
         self.stopped = False
         self.frame = None
         self.lock = threading.Lock()
@@ -96,9 +95,7 @@ class FakeCam:
         background_image: str,
         foreground_image: str,
         foreground_mask_image: str,
-        webcam_path: str,
-        v4l2loopback_path: str,
-        use_akvcam: bool
+        webcam: int
     ) -> None:
         self.no_background = no_background
         self.use_foreground = use_foreground
@@ -109,15 +106,12 @@ class FakeCam:
         self.foreground_image = foreground_image
         self.foreground_mask_image = foreground_mask_image
         self.scale_factor = scale_factor
-        self.real_cam = RealCam(webcam_path, width, height, fps)
+        self.real_cam = RealCam(webcam, width, height, fps)
         # In case the real webcam does not support the requested mode.
         self.width = self.real_cam.get_frame_width()
         self.height = self.real_cam.get_frame_height()
-        self.use_akvcam = use_akvcam
-        if not use_akvcam:
-            self.fake_cam = pyfakewebcam.FakeWebcam(v4l2loopback_path, self.width, self.height)
-        else:
-            self.fake_cam = AkvCameraWriter(v4l2loopback_path, self.width, self.height)
+        self.fake_cam = pyvirtualcam.Camera(width=640, height=480, fps=30)
+
         self.foreground_mask = None
         self.inverted_foreground_mask = None
         self.session = requests.Session()
@@ -201,7 +195,7 @@ class FakeCam:
                     while True:
                         self.bg_video_adv_rate = round(self.bg_video_fps/self.current_fps)
                         for i in range(self.bg_video_adv_rate):
-                            frame = read_frame();
+                            frame = read_frame()
                         yield frame
                 background = next_frame()
 
@@ -271,12 +265,12 @@ class FakeCam:
         return frame
 
     def put_frame(self, frame):
-        self.fake_cam.schedule_frame(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        self.fake_cam.send(cv2.cvtColor(frame, cv2.COLOR_BGR2RGBA))
+        self.fake_cam.sleep_until_next_frame()
 
     def stop(self):
         self.real_cam.stop()
-        if self.use_akvcam:
-            self.fake_cam.__del__()
+        self.fake_cam.close()
 
     async def run(self):
         await self.load_images()
@@ -303,24 +297,27 @@ class FakeCam:
                     print("FPS: {:6.2f}".format(self.current_fps), end="\r")
                     frame_count = 0
                     t0 = time.monotonic()
+                key = cv2.waitKey(20)
+                if key == 27: # exit on ESC
+                    break
 
 def parse_args():
     parser = ArgumentParser(description="Faking your webcam background under \
                             GNU/Linux. Please make sure your bodypix network \
                             is running. For more information, please refer to: \
                             https://github.com/fangfufu/Linux-Fake-Background-Webcam")
-    parser.add_argument("-W", "--width", default=1280, type=int,
+    parser.add_argument("-W", "--width", default=640, type=int,
                         help="Set real webcam width")
-    parser.add_argument("-H", "--height", default=720, type=int,
+    parser.add_argument("-H", "--height", default=480, type=int,
                         help="Set real webcam height")
-    parser.add_argument("-F", "--fps", default=30, type=int,
+    parser.add_argument("-F", "--fps", default=8, type=int,
                         help="Set real webcam FPS")
     parser.add_argument("-S", "--scale-factor", default=0.5, type=float,
                         help="Scale factor of the image sent to BodyPix network")
     parser.add_argument("-B", "--bodypix-url", default="http://127.0.0.1:9000",
                         help="Tensorflow BodyPix URL")
-    parser.add_argument("-w", "--webcam-path", default="/dev/video0",
-                        help="Set real webcam path")
+    parser.add_argument("-w", "--webcam", default="0", type=int,
+                        help="Set real webcam id")
     parser.add_argument("-v", "--v4l2loopback-path", default="/dev/video2",
                         help="V4l2loopback device path")
     parser.add_argument("--akvcam", action="store_true",
@@ -380,12 +377,10 @@ def main():
         background_image=findFile(args.background_image, args.image_folder),
         foreground_image=findFile(args.foreground_image, args.image_folder),
         foreground_mask_image=findFile(args.foreground_mask_image, args.image_folder),
-        webcam_path=args.webcam_path,
-        v4l2loopback_path=args.v4l2loopback_path,
-        use_akvcam=args.akvcam)
+        webcam=args.webcam)
     loop = asyncio.get_event_loop()
-    signal.signal(signal.SIGINT, partial(sigint_handler, loop, cam))
-    signal.signal(signal.SIGQUIT, partial(sigquit_handler, loop, cam))
+    # signal.signal(signal.SIGINT, partial(sigint_handler, loop, cam))
+    # signal.signal(signal.SIGQUIT, partial(sigquit_handler, loop, cam))
     print("Running...")
     print("Please CTRL-C to reload the background / foreground images")
     print("Please CTRL-\ to exit")
