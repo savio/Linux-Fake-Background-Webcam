@@ -19,8 +19,21 @@ cap.set(cv2.CAP_PROP_FOCUS, 5)
 firstFrame = None
 min_area = 500
 
+habilitar_gravar = False
+
+def keydown(e):
+    global habilitar_gravar
+    if (e.char == 'q'):
+        print('Habilitando gravação')
+        habilitar_gravar = True
+
+    if (e.char == 'p'):
+        print('Desabilitando gravação')
+        habilitar_gravar = False
+
 root = Tk()
 root.bind('<Escape>', lambda e: root.quit()) 
+root.bind("<KeyPress>", keydown)
 lmain = Label(root)
 lmain.pack()
 
@@ -89,23 +102,25 @@ def show_frame():
             winsound.Beep(600, 50)
             break
 
-        if text == "Occupied" and gravar == False:
+        if text == "Occupied" and habilitar_gravar and gravar == False:
             w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             out = cv2.VideoWriter('videos/video-' + str(count_video) + '.avi',fourcc, 20.0, (w,h))
             gravar = True
             num_frames = 0
 
-        if gravar and num_frames > 200:
+        if habilitar_gravar and gravar and num_frames > 200:
             gravar = False
             out.release()
             count_video = count_video + 1
         
-        if gravar:
+        if habilitar_gravar and gravar:
             out.write(frameOriginal)
             num_frames = num_frames + 1
 
         # draw the text and timestamp on the frame
+        cor = (0, 255, 0) if habilitar_gravar else (0, 0, 255)
+        cv2.putText(frame, "Gravacao Habilitada: {}".format(str(habilitar_gravar)), (frame.shape[1] - 230, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, cor, 2)
         cv2.putText(frame, "Room Status: {}".format(text), (10, 20),
             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
         cv2.putText(frame, datetime.datetime.now().strftime("%A %d %B %Y %I:%M:%S%p"),
@@ -125,6 +140,7 @@ def show_frame():
         key = cv2.waitKey(1) & 0xFF
         # if the `q` key is pressed, break from the lop
         if key == ord("q"):
+            print('pressed')
             return
 
 
@@ -132,6 +148,7 @@ def show_frame():
 show_frame()
 root.mainloop()
 # cleanup the camera and close any open windows
-out.release()
+if out:
+    out.release()
 cap.release()
 cv2.destroyAllWindows()
